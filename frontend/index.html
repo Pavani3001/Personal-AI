@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personal AI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PERSONAL AI</p>
+        <h1>Your context, your control.</h1>
+        <p class="subtitle">A persistent agent that plans, acts, verifies, and asks before anything sensitive.</p>
+      </div>
+      <span id="health" class="pill">Checking connection...</span>
+    </header>
+    <section class="layout">
+      <div class="panel chat-panel">
+        <div id="messages" class="messages">
+          <div class="message assistant"><strong>Personal AI</strong><p>Tell me a preference, ask me to plan something, or create a safe workspace artifact.</p></div>
+        </div>
+        <form id="chat-form" class="composer">
+          <textarea id="message" rows="2" placeholder="What should we work on?" required></textarea>
+          <button>Send <span>↗</span></button>
+        </form>
+      </div>
+      <aside class="sidebar">
+        <section class="panel">
+          <div class="section-heading"><h2>Agent trace</h2><span class="dot"></span></div>
+          <div id="trace" class="trace"><p class="muted">Your next run will appear here.</p></div>
+        </section>
+        <section class="panel">
+          <div class="section-heading"><h2>Pending approvals</h2><span id="approval-count" class="count">0</span></div>
+          <div id="approvals"><p class="muted">No actions waiting.</p></div>
+        </section>
+        <section class="panel">
+          <div class="section-heading"><h2>Persistent memory</h2><span id="memory-count" class="count">0</span></div>
+          <div id="memories"><p class="muted">No saved memories yet.</p></div>
+        </section>
+        <section class="panel">
+          <div class="section-heading"><h2>Background tasks</h2></div>
+          <form id="schedule-form" class="schedule-form">
+            <input id="schedule-title" placeholder="Reminder title" required>
+            <input id="schedule-time" type="datetime-local" required>
+            <button class="secondary">Schedule</button>
+          </form>
+          <div id="schedules"></div>
+        </section>
+        <section class="panel">
+          <div class="section-heading"><h2>Verified activity</h2><span class="dot"></span></div>
+          <div id="activity"><p class="muted">Completed actions will appear here.</p></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

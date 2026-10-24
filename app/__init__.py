@@ -1,0 +1,1 @@
+"""Personal AI application package."""
