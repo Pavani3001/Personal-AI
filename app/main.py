@@ -95,6 +95,18 @@ async def index() -> FileResponse:
     return FileResponse(ROOT_DIR / "frontend" / "index.html")
 
 
+@app.get("/static/style.css")
+@app.get("/style.css")
+async def style_css() -> FileResponse:
+    return FileResponse(ROOT_DIR / "frontend" / "style.css")
+
+
+@app.get("/static/app.js")
+@app.get("/app.js")
+async def app_js() -> FileResponse:
+    return FileResponse(ROOT_DIR / "frontend" / "app.js")
+
+
 # API Router handling both /api/* and prefixed requests cleanly
 api_router = APIRouter()
 

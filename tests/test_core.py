@@ -211,3 +211,32 @@ def test_nebius_client_retries_transient_failure(monkeypatch):
     monkeypatch.setattr(client.client.chat.completions, "create", call)
     assert asyncio.run(client.respond("system", "user")) == "ok"
     assert attempts == 2
+
+
+def test_static_files_and_frontend_serving():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+
+    # Test root and index
+    res_root = client.get("/")
+    assert res_root.status_code == 200
+    assert "Personal AI" in res_root.text
+
+    # Test static style and script paths
+    res_style_static = client.get("/static/style.css")
+    assert res_style_static.status_code == 200
+    assert "text/css" in res_style_static.headers["content-type"]
+
+    res_app_static = client.get("/static/app.js")
+    assert res_app_static.status_code == 200
+    assert "javascript" in res_app_static.headers["content-type"]
+
+    # Test root style and script fallback paths
+    res_style_root = client.get("/style.css")
+    assert res_style_root.status_code == 200
+
+    res_app_root = client.get("/app.js")
+    assert res_app_root.status_code == 200
+
