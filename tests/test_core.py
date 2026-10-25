@@ -240,3 +240,17 @@ def test_static_files_and_frontend_serving():
     res_app_root = client.get("/app.js")
     assert res_app_root.status_code == 200
 
+
+def test_serverless_workspace_uses_tempdir_and_is_writable(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VERCEL", "1")
+    from app.config import get_default_workspace
+    ws = get_default_workspace()
+    assert "personal_ai_workspace" in str(ws)
+
+    # Verify ToolManager initializes and writes without Read-only error
+    tools = ToolManager(tmp_path / "serverless_workspace")
+    written = tools.write_file("robotics_7_day_plan.md", "# 7 Day Plan")
+    assert written == "robotics_7_day_plan.md"
+    assert tools.read_file("robotics_7_day_plan.md") == "# 7 Day Plan"
+
+

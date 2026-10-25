@@ -1,14 +1,27 @@
-from __future__ import annotations
-
+import shutil
 from pathlib import Path
 
-from app.config import WORKSPACE_PATH
+from app.config import ROOT_DIR, WORKSPACE_PATH
 
 
 class ToolManager:
-    def __init__(self, workspace: Path = WORKSPACE_PATH) -> None:
-        self.workspace = workspace.resolve()
+    def __init__(self, workspace: Path | None = None) -> None:
+        self.workspace = (workspace or WORKSPACE_PATH).resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
+        if workspace is None and self.workspace != (ROOT_DIR / "workspace").resolve():
+            seed_dir = (ROOT_DIR / "workspace").resolve()
+            if seed_dir.exists():
+                try:
+                    for item in seed_dir.rglob("*"):
+                        if item.is_file():
+                            rel = item.relative_to(seed_dir)
+                            dest = self.workspace / rel
+                            if not dest.exists():
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(item, dest)
+                except Exception:
+                    pass
+
 
     def _safe_path(self, filename: str) -> Path:
         candidate = (self.workspace / filename).resolve()
