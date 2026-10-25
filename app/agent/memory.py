@@ -64,14 +64,30 @@ class MemoryManager:
     def retrieve_relevant_memories(self, message: str) -> list[dict[str, Any]]:
         if self.is_broad_recall_request(message):
             return self.list_memories()
-        return self.search_memory(message)
+        results = self.search_memory(message)
+        if not results:
+            all_mems = self.list_memories()
+            return [m for m in all_mems if m.get("memory_type") == "goal" or m.get("importance", 0) >= 4][:5]
+        return results
 
     @staticmethod
     def is_broad_recall_request(message: str) -> bool:
         normalized = " ".join(message.lower().split())
         return any(
             phrase in normalized
-            for phrase in ("what do you remember", "what do you know about me", "show my memories")
+            for phrase in (
+                "what do you remember",
+                "what do you know about me",
+                "show my memories",
+                "what should i work on",
+                "what should i do",
+                "what are my goals",
+                "what is my goal",
+                "what are my priorities",
+                "what am i working on",
+                "what next",
+                "what's next",
+            )
         )
 
     def delete_memory(self, memory_id: int) -> None:

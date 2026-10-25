@@ -254,3 +254,14 @@ def test_serverless_workspace_uses_tempdir_and_is_writable(monkeypatch, tmp_path
     assert tools.read_file("robotics_7_day_plan.md") == "# 7 Day Plan"
 
 
+def test_open_ended_questions_recall_goals(tmp_path: Path):
+    database = Database(tmp_path / "goals.db")
+    manager = MemoryManager(database)
+    manager.save_memory("Your goal is to become internship-ready in robotics.", "goal", 5)
+
+    mems = manager.retrieve_relevant_memories("what should i work on")
+    assert len(mems) > 0
+    assert "robotics" in mems[0]["content"]
+
+
+
