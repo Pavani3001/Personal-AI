@@ -38,7 +38,7 @@ async def lifespan(_: FastAPI):
     await scheduler.stop()
 
 
-app = FastAPI(title="Personal AI", lifespan=lifespan)
+app = FastAPI(title="Personal AI", lifespan=lifespan, redirect_slashes=False)
 app.mount("/static", StaticFiles(directory=ROOT_DIR / "frontend"), name="static")
 
 
@@ -90,6 +90,7 @@ class ApprovalRequest(BaseModel):
 # Root and index handlers
 @app.get("/")
 @app.get("/api/index")
+@app.get("/api/index.py")
 async def index() -> FileResponse:
     return FileResponse(ROOT_DIR / "frontend" / "index.html")
 
