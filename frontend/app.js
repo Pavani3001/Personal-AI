@@ -22,25 +22,49 @@ function renderTrace(items = []) {
     '<p class="muted">Your next run will appear here.</p>';
 }
 
-async function refreshPanels() {
-  const [memories, approvals, schedules, activity] = await Promise.all([
-    api("/api/memories"), api("/api/approvals"), api("/api/schedules"), api("/api/activity")
-  ]);
+function renderMemories(memories = []) {
   $("#memory-count").textContent = memories.length;
   $("#memories").innerHTML = memories.length ? memories.map(memory =>
     `<div class="memory"><strong>${escapeHtml(memory.content)}</strong><small>${memory.memory_type} · importance ${memory.importance}</small></div>`).join("") :
     '<p class="muted">No saved memories yet.</p>';
+}
+
+function renderApprovals(approvals = []) {
   $("#approval-count").textContent = approvals.length;
   $("#approvals").innerHTML = approvals.length ? approvals.map(item =>
     `<div class="approval"><strong>${escapeHtml(item.action)}</strong><small>${escapeHtml(item.resource)}</small>
       <button data-approval="${item.id}" data-status="approved">Approve</button>
       <button data-approval="${item.id}" data-status="rejected">Reject</button></div>`).join("") :
     '<p class="muted">No actions waiting.</p>';
+}
+
+function renderSchedules(schedules = []) {
   $("#schedules").innerHTML = schedules.length ? schedules.map(item =>
     `<div class="schedule"><strong>${escapeHtml(item.title)}</strong><small>${new Date(item.run_at).toLocaleString()} · ${item.status}${item.result ? ` · ${escapeHtml(item.result)}` : ""}</small></div>`).join("") : "";
+}
+
+function renderActivity(activity = []) {
   $("#activity").innerHTML = activity.length ? activity.slice(-8).reverse().map(item =>
     `<div class="schedule"><strong>✓ ${escapeHtml(item.label)}</strong><small>${escapeHtml(item.detail)} · ${new Date(item.created_at).toLocaleTimeString()}</small></div>`).join("") :
     '<p class="muted">Completed actions will appear here.</p>';
+}
+
+async function refreshPanels() {
+  try {
+    const state = await api("/api/state");
+    renderMemories(state.memories || []);
+    renderApprovals(state.approvals || []);
+    renderSchedules(state.schedules || []);
+    renderActivity(state.activity || []);
+  } catch {
+    const [memories, approvals, schedules, activity] = await Promise.all([
+      api("/api/memories"), api("/api/approvals"), api("/api/schedules"), api("/api/activity")
+    ]);
+    renderMemories(memories);
+    renderApprovals(approvals);
+    renderSchedules(schedules);
+    renderActivity(activity);
+  }
 }
 
 function escapeHtml(value) {
@@ -55,12 +79,27 @@ $("#chat-form").addEventListener("submit", async (event) => {
   addMessage("user", message);
   input.value = "";
   renderTrace([{label: "Planning task", detail: "Working through the agent loop..."}]);
+
+  const isMemoryPrompt = /(?:remember that|my goal is|i prefer|save this)/i.test(message);
+  if (isMemoryPrompt) {
+    const currentHTML = $("#memories").innerHTML;
+    if (currentHTML.includes("No saved memories yet")) {
+      $("#memories").innerHTML = '<div class="memory" id="pending-memory" style="opacity:0.6"><strong>Saving memory...</strong><small>processing · importance 5</small></div>';
+    } else {
+      $("#memories").insertAdjacentHTML("afterbegin", '<div class="memory" id="pending-memory" style="opacity:0.6"><strong>Saving memory...</strong><small>processing · importance 5</small></div>');
+    }
+  }
+
   try {
     const result = await api("/api/chat", {method: "POST", body: JSON.stringify({message})});
     addMessage("assistant", result.response);
     renderTrace(result.trace);
     await refreshPanels();
-  } catch (error) { addMessage("assistant", `I could not complete that: ${error.message}`); }
+  } catch (error) {
+    addMessage("assistant", `I could not complete that: ${error.message}`);
+    const pending = $("#pending-memory");
+    if (pending) pending.remove();
+  }
 });
 
 $("#approvals").addEventListener("click", async (event) => {

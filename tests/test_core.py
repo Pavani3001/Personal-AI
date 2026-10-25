@@ -264,4 +264,19 @@ def test_open_ended_questions_recall_goals(tmp_path: Path):
     assert "robotics" in mems[0]["content"]
 
 
+def test_state_endpoint():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    res = client.get("/api/state")
+    assert res.status_code == 200
+    data = res.json()
+    assert "memories" in data
+    assert "approvals" in data
+    assert "schedules" in data
+    assert "activity" in data
+
+
+
 

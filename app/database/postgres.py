@@ -31,6 +31,9 @@ def mask_database_url(url: str) -> str:
     return re.sub(r"://([^:@]+):([^@]+)@", r"://\1:****@", url)
 
 
+_POSTGRES_SCHEMA_INITIALIZED = False
+
+
 class PostgresRepository(BaseRepository):
     """Hosted PostgreSQL implementation of BaseRepository for Vercel production deployment."""
 
@@ -140,9 +143,12 @@ class PostgresRepository(BaseRepository):
                         pass
 
     def initialize(self) -> None:
-        """Initialize PostgreSQL tables safely for concurrent serverless environments."""
-        statements = [
-            """
+        """Initialize PostgreSQL tables safely and rapidly in one multi-statement execution."""
+        global _POSTGRES_SCHEMA_INITIALIZED
+        if _POSTGRES_SCHEMA_INITIALIZED:
+            return
+
+        combined_sql = """
             CREATE TABLE IF NOT EXISTS memories (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -151,16 +157,12 @@ class PostgresRepository(BaseRepository):
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            """,
-            """
             CREATE TABLE IF NOT EXISTS conversations (
                 id SERIAL PRIMARY KEY,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
-            """,
-            """
             CREATE TABLE IF NOT EXISTS tasks (
                 id SERIAL PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -169,8 +171,6 @@ class PostgresRepository(BaseRepository):
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            """,
-            """
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id SERIAL PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -179,8 +179,6 @@ class PostgresRepository(BaseRepository):
                 result TEXT,
                 created_at TEXT NOT NULL
             );
-            """,
-            """
             CREATE TABLE IF NOT EXISTS approvals (
                 id SERIAL PRIMARY KEY,
                 action TEXT NOT NULL,
@@ -191,8 +189,6 @@ class PostgresRepository(BaseRepository):
                 created_at TEXT NOT NULL,
                 resolved_at TEXT
             );
-            """,
-            """
             CREATE TABLE IF NOT EXISTS activity_events (
                 id SERIAL PRIMARY KEY,
                 label TEXT NOT NULL,
@@ -200,28 +196,15 @@ class PostgresRepository(BaseRepository):
                 status TEXT NOT NULL DEFAULT 'completed',
                 created_at TEXT NOT NULL
             );
-            """,
-        ]
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                for statement in statements:
-                    try:
-                        cur.execute(statement)
-                    except Exception as exc:
-                        logger.warning("Table initialization notice: %s", exc)
-                # Safe migration check: add payload column to approvals if missing
-                cur.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name = 'approvals' AND column_name = 'payload';
-                    """
-                )
-                if not cur.fetchone():
-                    try:
-                        cur.execute("ALTER TABLE approvals ADD COLUMN payload TEXT;")
-                    except Exception as exc:
-                        logger.warning("Column addition notice: %s", exc)
+            ALTER TABLE approvals ADD COLUMN IF NOT EXISTS payload TEXT;
+        """
+        try:
+            with self.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(combined_sql)
+            _POSTGRES_SCHEMA_INITIALIZED = True
+        except Exception as exc:
+            logger.warning("Table initialization notice: %s", exc)
 
     def add_memory(self, content: str, memory_type: str, importance: int = 3) -> dict[str, Any]:
         now = utc_now()

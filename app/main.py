@@ -133,6 +133,17 @@ async def memories() -> list[dict[str, Any]]:
     return MemoryManager(database).list_memories()
 
 
+@api_router.get("/state")
+async def get_state() -> dict[str, Any]:
+    return {
+        "memories": MemoryManager(database).list_memories(),
+        "approvals": database.list_approvals(),
+        "schedules": database.list_schedules(),
+        "activity": database.list_activity(limit=10),
+    }
+
+
+
 @api_router.post("/memories")
 async def save_memory(request: MemoryRequest) -> dict[str, Any]:
     try:
