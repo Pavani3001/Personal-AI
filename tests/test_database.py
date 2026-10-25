@@ -189,12 +189,26 @@ def test_api_endpoints_work_and_return_json(tmp_path: Path):
          patch("app.main.agent.permissions.database", test_db):
         client = TestClient(app)
 
-        # 1. Health check
+        # Verify api/index.py exports the exact same app
+        from api.index import app as vercel_app
+        assert vercel_app is app
+
+        # 1. Health check via /api/health and /health alias
         res = client.get("/api/health")
         assert res.status_code == 200
+        assert res.headers["content-type"].startswith("application/json")
         data = res.json()
         assert data["ok"] is True
         assert "database_backend" in data
+
+        res_alias = client.get("/health")
+        assert res_alias.status_code == 200
+        assert res_alias.headers["content-type"].startswith("application/json")
+        assert res_alias.json()["ok"] is True
+
+        # Verify root returns index html
+        res_root = client.get("/")
+        assert res_root.status_code == 200
 
         # 2. Create and Read Memory
         res = client.post("/api/memories", json={"content": "I like fast APIs", "memory_type": "preference", "importance": 4})

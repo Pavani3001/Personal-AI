@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -87,12 +87,18 @@ class ApprovalRequest(BaseModel):
     status: str
 
 
+# Root and index handlers
 @app.get("/")
+@app.get("/api/index")
 async def index() -> FileResponse:
     return FileResponse(ROOT_DIR / "frontend" / "index.html")
 
 
-@app.get("/api/health")
+# API Router handling both /api/* and prefixed requests cleanly
+api_router = APIRouter()
+
+
+@api_router.get("/health")
 async def health() -> dict[str, Any]:
     return {
         "ok": True,
@@ -101,7 +107,7 @@ async def health() -> dict[str, Any]:
     }
 
 
-@app.post("/api/chat")
+@api_router.post("/chat")
 async def chat(request: ChatRequest) -> dict[str, Any]:
     try:
         return await agent.run(request.message)
@@ -109,12 +115,12 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/memories")
+@api_router.get("/memories")
 async def memories() -> list[dict[str, Any]]:
     return MemoryManager(database).list_memories()
 
 
-@app.post("/api/memories")
+@api_router.post("/memories")
 async def save_memory(request: MemoryRequest) -> dict[str, Any]:
     try:
         return MemoryManager(database).save_memory(request.content, request.memory_type, request.importance)
@@ -122,18 +128,18 @@ async def save_memory(request: MemoryRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.delete("/api/memories/{memory_id}")
+@api_router.delete("/memories/{memory_id}")
 async def delete_memory(memory_id: int) -> dict[str, bool]:
     MemoryManager(database).delete_memory(memory_id)
     return {"deleted": True}
 
 
-@app.get("/api/approvals")
+@api_router.get("/approvals")
 async def approvals() -> list[dict[str, Any]]:
     return database.list_approvals()
 
 
-@app.post("/api/approvals/{approval_id}")
+@api_router.post("/approvals/{approval_id}")
 async def resolve_approval(approval_id: int, request: ApprovalRequest) -> dict[str, Any]:
     try:
         approval = database.resolve_approval(approval_id, request.status)
@@ -158,18 +164,23 @@ async def resolve_approval(approval_id: int, request: ApprovalRequest) -> dict[s
         raise HTTPException(status_code=400, detail=f"Approved action failed: {exc}") from exc
 
 
-@app.get("/api/schedules")
+@api_router.get("/schedules")
 async def schedules() -> list[dict[str, Any]]:
     return database.list_schedules()
 
 
-@app.get("/api/activity")
-async def activity() -> list[dict[str, Any]]:
-    return database.list_activity()
-
-
-@app.post("/api/schedules")
+@api_router.post("/schedules")
 async def schedule(request: ScheduleRequest) -> dict[str, Any]:
     if request.run_at <= datetime.now(request.run_at.tzinfo):
         raise HTTPException(status_code=400, detail="Scheduled time must be in the future.")
     return database.add_schedule(request.title, request.run_at.isoformat())
+
+
+@api_router.get("/activity")
+async def activity() -> list[dict[str, Any]]:
+    return database.list_activity()
+
+
+# Mount api_router under /api (for /api/health, /api/chat, etc.) AND at root (for /health, /chat, etc.)
+app.include_router(api_router, prefix="/api")
+app.include_router(api_router)
