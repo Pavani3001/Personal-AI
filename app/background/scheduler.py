@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from app.database.database import Database
+
+logger = logging.getLogger("app.background.scheduler")
 
 
 class BackgroundTaskManager:
@@ -21,8 +24,11 @@ class BackgroundTaskManager:
 
     async def _poll(self) -> None:
         while True:
-            for item in self.database.due_schedules(datetime.now(timezone.utc).isoformat()):
-                result = f"Reminder: {item['title']}"
-                self.database.complete_schedule(item["id"], result)
-                self.database.add_activity("Background task completed", result)
+            try:
+                for item in self.database.due_schedules(datetime.now(timezone.utc).isoformat()):
+                    result = f"Reminder: {item['title']}"
+                    self.database.complete_schedule(item["id"], result)
+                    self.database.add_activity("Background task completed", result)
+            except Exception as exc:
+                logger.warning("Background scheduler poll encountered error: %s", exc)
             await asyncio.sleep(15)

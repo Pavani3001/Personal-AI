@@ -93,7 +93,7 @@ class PersonalAgent:
                 "response": response,
                 "trace": trace,
                 "memories": [saved],
-                "plan": ["Identify useful personal information", "Save it to SQLite", "Confirm the saved memory"],
+                "plan": ["Identify useful personal information", "Save it to persistent storage", "Confirm the saved memory"],
                 "skill": "memory",
                 "memory": saved,
             }
@@ -103,7 +103,7 @@ class PersonalAgent:
             goals = [memory for memory in memories if memory["memory_type"] == "goal"]
             if goals:
                 response = f"Your current goal is {goals[0]['content'].removeprefix('Your goal is ')}"
-                status("Memory used", f"Retrieved goal memory #{goals[0]['id']} from SQLite.")
+                status("Memory used", f"Retrieved goal memory #{goals[0]['id']} from persistent storage.")
                 status("Verifying result", "Personal context matched a saved goal.")
                 self.database.add_conversation("assistant", response)
                 return {"response": response, "trace": trace, "memories": memories,
@@ -111,7 +111,7 @@ class PersonalAgent:
         if memories and MemoryManager.is_broad_recall_request(message):
             details = "\n".join(f"- {memory['content']}" for memory in memories)
             response = f"Here is what I remember about you:\n{details}"
-            status("Memory used", f"Retrieved {len(memories)} saved memory record(s) from SQLite.")
+            status("Memory used", f"Retrieved {len(memories)} saved memory record(s) from persistent storage.")
             status("Verifying result", "Response is grounded in saved memories.")
             self.database.add_conversation("assistant", response)
             return {"response": response, "trace": trace, "memories": memories,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -14,8 +15,12 @@ from app.agent.agent import PersonalAgent
 from app.agent.memory import MemoryManager
 from app.agent.tools import ToolManager
 from app.background.scheduler import BackgroundTaskManager
-from app.config import ROOT_DIR, validate_configuration
+from app.config import NEBIUS_API_KEY, ROOT_DIR, validate_configuration
+from app.database.base import DatabaseError
 from app.database.database import Database
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app.main")
 
 database = Database()
 agent = PersonalAgent(database)
@@ -26,8 +31,8 @@ scheduler = BackgroundTaskManager(database)
 async def lifespan(_: FastAPI):
     try:
         validate_configuration()
-    except RuntimeError:
-        pass
+    except RuntimeError as exc:
+        logger.warning("Configuration validation notice: %s", exc)
     scheduler.start()
     yield
     await scheduler.stop()
@@ -35,6 +40,32 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Personal AI", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT_DIR / "frontend"), name="static")
+
+
+@app.exception_handler(DatabaseError)
+async def database_exception_handler(_: Request, exc: DatabaseError) -> JSONResponse:
+    logger.error("Database operation failed: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database operation failed.", "error": str(exc)},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled server error: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred.", "error": str(exc)},
+    )
 
 
 class ChatRequest(BaseModel):
@@ -63,7 +94,11 @@ async def index() -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "nebius_configured": bool(__import__("app.config", fromlist=["NEBIUS_API_KEY"]).NEBIUS_API_KEY)}
+    return {
+        "ok": True,
+        "nebius_configured": bool(NEBIUS_API_KEY),
+        "database_backend": database.backend_name,
+    }
 
 
 @app.post("/api/chat")

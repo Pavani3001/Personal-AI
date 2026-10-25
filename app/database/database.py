@@ -1,240 +1,133 @@
 from __future__ import annotations
 
-import json
-import sqlite3
+import logging
+import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from app.config import DATABASE_PATH
+from app.database.base import BaseRepository, DatabaseError, utc_now
+from app.database.postgres import PostgresRepository
+from app.database.sqlite import SQLiteRepository
+
+logger = logging.getLogger("app.database")
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+class Database(BaseRepository):
+    """Unified Database repository facade.
 
+    Automatically selects PostgresRepository for Vercel production deployment
+    when DATABASE_URL is configured, and SQLiteRepository for local development/testing.
+    """
 
-class Database:
-    def __init__(self, path: Path = DATABASE_PATH) -> None:
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.initialize()
+    def __init__(self, target: Path | str | None = None, database_url: str | None = None) -> None:
+        self._repo: BaseRepository = self._create_repository(target, database_url)
+
+    @staticmethod
+    def _create_repository(target: Path | str | None = None, database_url: str | None = None) -> BaseRepository:
+        # 1. Explicit target provided (e.g. tests passing tmp_path / "test.db")
+        if target is not None:
+            target_str = str(target).strip()
+            if target_str.startswith(("postgres://", "postgresql://")):
+                return PostgresRepository(target_str)
+            if target_str.startswith("sqlite:///"):
+                return SQLiteRepository(target_str[len("sqlite:///"):])
+            return SQLiteRepository(target)
+
+        # 2. Check environment variable / explicit database_url
+        env_url = (database_url or os.getenv("DATABASE_URL", "")).strip()
+        if env_url:
+            if env_url.startswith(("postgres://", "postgresql://")):
+                return PostgresRepository(env_url)
+            if env_url.startswith("sqlite:///"):
+                return SQLiteRepository(env_url[len("sqlite:///"):])
+            return SQLiteRepository(env_url)
+
+        # 3. Running in Vercel production environment without DATABASE_URL
+        if os.getenv("VERCEL"):
+            raise RuntimeError(
+                "DATABASE_URL environment variable is required for Vercel production deployment. "
+                "Please add your hosted PostgreSQL connection URL (e.g. from Neon, Supabase) "
+                "in your Vercel Project Settings -> Environment Variables."
+            )
+
+        # 4. Local development default: persistent SQLite
+        logger.info("Using local SQLite storage at %s", DATABASE_PATH)
+        return SQLiteRepository(DATABASE_PATH)
+
+    @property
+    def repository(self) -> BaseRepository:
+        """The underlying active database repository."""
+        return self._repo
+
+    @property
+    def backend_name(self) -> str:
+        """Active storage backend: 'sqlite' or 'postgresql'."""
+        return self._repo.backend_name
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        try:
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
+    def connection(self) -> Iterator[Any]:
+        """Context manager yielding the active database connection."""
+        if hasattr(self._repo, "connection"):
+            with getattr(self._repo, "connection")() as conn:
+                yield conn
+        else:
+            raise NotImplementedError("Connection context manager not supported on active repository.")
 
     def initialize(self) -> None:
-        with self.connection() as db:
-            db.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS memories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content TEXT NOT NULL,
-                    memory_type TEXT NOT NULL,
-                    importance INTEGER NOT NULL DEFAULT 3,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    run_at TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'scheduled',
-                    result TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS approvals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    action TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    resource TEXT NOT NULL,
-                    payload TEXT,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TEXT NOT NULL,
-                    resolved_at TEXT
-                );
-                CREATE TABLE IF NOT EXISTS activity_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    label TEXT NOT NULL,
-                    detail TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'completed',
-                    created_at TEXT NOT NULL
-                );
-                """
-            )
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(approvals)").fetchall()}
-            if "payload" not in columns:
-                db.execute("ALTER TABLE approvals ADD COLUMN payload TEXT")
+        self._repo.initialize()
 
     def add_memory(self, content: str, memory_type: str, importance: int = 3) -> dict[str, Any]:
-        now = utc_now()
-        with self.connection() as db:
-            cursor = db.execute(
-                "INSERT INTO memories(content, memory_type, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (content.strip(), memory_type, importance, now, now),
-            )
-            row = db.execute("SELECT * FROM memories WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        if row is None:
-            raise RuntimeError("Memory could not be created.")
-        return dict(row)
+        return self._repo.add_memory(content, memory_type, importance)
 
     def get_memory(self, memory_id: int | None) -> dict[str, Any]:
-        if memory_id is None:
-            raise RuntimeError("Memory could not be created.")
-        with self.connection() as db:
-            row = db.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
-        if row is None:
-            raise KeyError("Memory not found.")
-        return dict(row)
+        return self._repo.get_memory(memory_id)
 
     def search_memories(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
-        terms = [term for term in query.lower().split() if len(term) > 2]
-        with self.connection() as db:
-            if not terms:
-                rows = db.execute(
-                    "SELECT * FROM memories ORDER BY importance DESC, updated_at DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-            else:
-                clauses = " OR ".join("(lower(content) LIKE ? OR lower(memory_type) LIKE ?)" for _ in terms)
-                params = [value for term in terms for value in (f"%{term}%", f"%{term}%")]
-                rows = db.execute(
-                    f"SELECT * FROM memories WHERE {clauses} ORDER BY importance DESC, updated_at DESC LIMIT ?",
-                    (*params, limit),
-                ).fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.search_memories(query, limit)
 
     def list_memories(self) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute("SELECT * FROM memories ORDER BY updated_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.list_memories()
 
     def delete_memory(self, memory_id: int) -> None:
-        with self.connection() as db:
-            db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        self._repo.delete_memory(memory_id)
 
     def add_conversation(self, role: str, content: str) -> None:
-        with self.connection() as db:
-            db.execute(
-                "INSERT INTO conversations(role, content, created_at) VALUES (?, ?, ?)",
-                (role, content, utc_now()),
-            )
+        self._repo.add_conversation(role, content)
 
     def recent_conversations(self, limit: int = 12) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute(
-                "SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return self._repo.recent_conversations(limit)
 
     def add_activity(self, label: str, detail: str, status: str = "completed") -> dict[str, Any]:
-        with self.connection() as db:
-            cursor = db.execute(
-                "INSERT INTO activity_events(label, detail, status, created_at) VALUES (?, ?, ?, ?)",
-                (label, detail, status, utc_now()),
-            )
-            row = db.execute("SELECT * FROM activity_events WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        if row is None:
-            raise RuntimeError("Activity event could not be created.")
-        return dict(row)
+        return self._repo.add_activity(label, detail, status)
 
     def list_activity(self, limit: int = 30) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute(
-                "SELECT * FROM activity_events ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return self._repo.list_activity(limit)
 
     def add_task(self, title: str, status: str = "pending", result: str | None = None) -> dict[str, Any]:
-        now = utc_now()
-        with self.connection() as db:
-            cursor = db.execute(
-                "INSERT INTO tasks(title, status, result, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (title, status, result, now, now),
-            )
-            row = db.execute("SELECT * FROM tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+        return self._repo.add_task(title, status, result)
 
     def list_tasks(self) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute("SELECT * FROM tasks ORDER BY updated_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.list_tasks()
 
     def add_schedule(self, title: str, run_at: str) -> dict[str, Any]:
-        with self.connection() as db:
-            cursor = db.execute(
-                "INSERT INTO scheduled_tasks(title, run_at, created_at) VALUES (?, ?, ?)",
-                (title, run_at, utc_now()),
-            )
-            row = db.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+        return self._repo.add_schedule(title, run_at)
 
     def list_schedules(self) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute("SELECT * FROM scheduled_tasks ORDER BY run_at").fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.list_schedules()
 
     def add_approval(self, action: str, reason: str, resource: str, payload: str | None = None) -> dict[str, Any]:
-        with self.connection() as db:
-            cursor = db.execute(
-                "INSERT INTO approvals(action, reason, resource, payload, created_at) VALUES (?, ?, ?, ?, ?)",
-                (action, reason, resource, payload, utc_now()),
-            )
-            row = db.execute("SELECT * FROM approvals WHERE id = ?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+        return self._repo.add_approval(action, reason, resource, payload)
 
     def list_approvals(self, status: str = "pending") -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute(
-                "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC", (status,)
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.list_approvals(status)
 
     def resolve_approval(self, approval_id: int, status: str) -> dict[str, Any]:
-        if status not in {"approved", "rejected"}:
-            raise ValueError("Approval status must be approved or rejected.")
-        with self.connection() as db:
-            db.execute(
-                "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?",
-                (status, utc_now(), approval_id),
-            )
-            row = db.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-        if row is None:
-            raise KeyError("Approval not found.")
-        return dict(row)
+        return self._repo.resolve_approval(approval_id, status)
 
     def due_schedules(self, now: str) -> list[dict[str, Any]]:
-        with self.connection() as db:
-            rows = db.execute(
-                "SELECT * FROM scheduled_tasks WHERE status = 'scheduled' AND run_at <= ?",
-                (now,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return self._repo.due_schedules(now)
 
     def complete_schedule(self, schedule_id: int, result: str) -> None:
-        with self.connection() as db:
-            db.execute(
-                "UPDATE scheduled_tasks SET status = 'completed', result = ? WHERE id = ?",
-                (result, schedule_id),
-            )
+        self._repo.complete_schedule(schedule_id, result)

@@ -1,6 +1,6 @@
 # Personal AI
 
-A persistent, approval-aware personal AI agent built with FastAPI, SQLite, and intelligent memory management.
+A persistent, approval-aware personal AI agent built with FastAPI, intelligent memory management, and dual-backend persistent storage (PostgreSQL for Vercel production & SQLite for local development).
 
 ## Problem and solution
 
@@ -21,7 +21,7 @@ Normal chatbots forget context and only answer one prompt at a time. Personal AI
 
 ## Architecture
 
-The browser calls FastAPI. The agent retrieves memory, creates a plan, selects a skill, assesses permissions, calls the dedicated Nebius OpenAI-compatible client, verifies the response, and stores useful context. SQLite provides persistence across restarts; the background manager polls scheduled tasks. Every meaningful state transition is recorded in an activity timeline, so the UI proves what happened instead of relying on model claims.
+The browser calls FastAPI. The agent retrieves memory, creates a plan, selects a skill, assesses permissions, calls the dedicated Nebius OpenAI-compatible client, verifies the response, and stores useful context. Persistent storage is managed via a clean repository abstraction supporting hosted PostgreSQL (for serverless Vercel deployments) and SQLite (for local development). The background manager polls scheduled tasks. Every meaningful state transition is recorded in an activity timeline, so the UI proves what happened instead of relying on model claims.
 
 Nebius Token Factory is part of the runtime inference path, not a mock or an offline fallback. The API key is loaded only by the server from `.env` and is never sent to the browser.
 
@@ -39,6 +39,8 @@ Create `.env`:
 ```env
 NEBIUS_API_KEY=your_server_side_key
 # Optional: NEBIUS_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
+# Production on Vercel:
+# DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
 ```
 
 Open `http://127.0.0.1:8000`. The `workspace/` directory is the only location exposed to file tools. File and folder creation is approval-gated: the agent prepares the action, the UI approval executes it, and the resulting relative path is shown in the chat.
